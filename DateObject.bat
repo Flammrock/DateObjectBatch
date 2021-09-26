@@ -11,7 +11,6 @@ rem LE CODE ICI
 
 
 
-
 pause>nul&exit
 
 ::================================================================::
@@ -169,6 +168,7 @@ pause>nul&exit
                 )
             )
             if "!data[%%i].Format!"=="DDD" set /a "di=%%~d-1"
+            if "!data[%%i].Format!"=="DDDD" set /a "di=%%~d-1"
             if "!data[%%i].Format!"=="mm" set "monthname=%%~d"
             if "!data[%%i].Format!"=="m" set "monthshortname=%%~d"
             if "!data[%%i].Format!"=="dd" set "dayname=%%~d"
@@ -275,6 +275,10 @@ pause>nul&exit
     call :Date.GetMonthName monthname !Month!
     call :Date.GetMonthShortName monthshortname !Month!
     set /a dayindex+=1
+    if not "!di!"=="-1" (
+        set /a di+=1
+        if not "!di!"=="!dayindex!" goto :Date.Error.DateInvalid
+    )
     call :Date.GetWeekOfMonth weekofmonth !Day! !Month! !Year!
     call :Date.GetWeekOfYear weekofyear !Day! !Month! !Year!
     if not "!wm!"=="" if not "!wm!"=="!weekofmonth!" goto :Date.Error.DateInvalid
@@ -650,9 +654,6 @@ exit /b 1
         if "!isnumber!"=="1" (
             set "test="&for /f "delims=0123456789" %%i in ("!ch!") do set "test=%%i"
         ) else (
-            rem TODO: bug : n'affiche pas que le format est invalide seulement "date is not valid"
-            rem "31/08/2021 %time:~0,8% 35 Mar." "DD/MM/YYYY HH:II:SS W d"
-            rem reproduire le bug: ne pas autoriser le point "." dans la liste ci-dessous :
             if "!%~3.Format!"=="d" (
                 set "test="&for /f "delims=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz." %%i in ("!ch!") do set "test=%%i"
             ) else if "!%~3.Format!"=="m" (
@@ -760,14 +761,12 @@ exit /b 0
             echo;Error: Format and Date not match
             exit /b 1
         )
-        rem echo;!localdata!
         set /a len=!indexend!-!indexstart!&set /a len2=!indexend2!-!indexstart2!
         set offset=!length!
         set parsedData=!parsedData! "!datalength!:!localdata!:!length!:!formatobj[%%i].Format!"
         set /a datalength+=1
         set offset2=!formatobj[%%i].Length!
         for /f "tokens=1-4 delims= " %%1 in ('echo;!indexstart! !len! !indexstart2! !len2!') do (
-            rem [DEBUG] echo;"!localdata!" !indexstart! -- !len! : [!data:~%%1,%%2!] [!formate:~%%3,%%4!]
             call :Date.CheckDataFormat formatobj "!indexstart!" "!len!" "!indexstart2!" "!len2!" "!data!" "!format!" || (
                endlocal
                echo;Error: Format and Date not match
@@ -826,9 +825,11 @@ exit /b 0
     set data=
     set skip=0
     for %%i in (DDDD DDD DD D d dd MM M mm m YYYY HH H II I SS S w W ww WW t T) do set Date.Format.%%i=1
-    for /f "tokens=1* delims=:" %%a in ('"%comspec% /u /c echo:!format!|more|findstr /o ."') do (
+    set ii=0
+    :Date.ParseFormat.LoopChar
+    for %%q in (!ii!) do for %%b in ("!format:~%%q,1!") do (
         if !skip! gtr 0 set /a skip-=1
-        if "!skip!"=="0" if "%%b"=="\" (
+        if "!skip!"=="0" if "%%~b"=="\" (
             set skip=2
             if not "!_tmp!"=="" (
                 set "data=!data! !length!:!_tmp!:!istart!:!len!"
@@ -841,17 +842,17 @@ exit /b 0
         )
         if "!skip!"=="0" (
             set v=0
-            for %%i in (d m y h s D M Y H I S w W t T) do if "%%b"=="%%i" set v=1
-            if "!v!"=="1" if not "!_tmp!"=="" if not "%%b"=="!_tmp:~0,1!" set v=2
+            for %%i in (d m y h s D M Y H I S w W t T) do if "%%~b"=="%%i" set v=1
+            if "!v!"=="1" if not "!_tmp!"=="" if not "%%~b"=="!_tmp:~0,1!" set v=2
             (
-                set Date.Format.!_tmp!%%b || (
+                set Date.Format.!_tmp!%%~b || (
                     set Date.Format.!_tmp! && (
                         if "!v!"=="1" set /a v+=1
                     )
                 )
             )>nul 2>&1
             if "!v!"=="1" (
-                set "_tmp=!_tmp!%%b"
+                set "_tmp=!_tmp!%%~b"
                 set /a len+=1
             ) else (
                 if not "!_tmp!"=="" (
@@ -861,7 +862,7 @@ exit /b 0
                     set /a length+=1
                 )
                 if "!v!"=="2" (
-                    set "_tmp=%%b"
+                    set "_tmp=%%~b"
                     set len=1
                     set istart=!i!
                 ) else (
@@ -873,6 +874,8 @@ exit /b 0
         )
         set /a i+=1
     )
+    set /a ii+=1
+    for %%q in (!ii!) do if not "!format:~%%~q,1!"=="" goto :Date.ParseFormat.LoopChar
     if not "!_tmp!"=="" (
         set "data=!data! !length!:!_tmp!:!istart!:!len!"
         set /a length+=1
@@ -2612,20 +2615,30 @@ exit /b
     setlocal enabledelayedexpansion
     set /a "day=!Date.r:z=%~5!"&set /a "month=!Date.r:z=%~6!"&set /a "year=!Date.r:z=%~7!"
     call :TimeCalc.Add "%~8" "%~9" t
+    set "ta=!t!"
+    if "!t:~0,1!"=="-" set "ta=!t:~1!"
+    set da=0&set ha=0&set ma=0&set sa=0
+    for /f "tokens=1-3 delims=:" %%1 in ('echo;!ta!') do (
+        set /a "ha=!Date.r:z=%%1!"&set /a "ma=!Date.r:z=%%2!"&set /a "sa=!Date.r:z=%%3!"
+        set /a ma+=!sa!/60
+        set /a sa=!sa! %% 60
+        if !sa! leq 9 set sa=0!sa!
+        set /a ha+=!ma!/60
+        set /a ma=!ma! %% 60
+        if !ma! leq 9 set ma=0!ma!
+        set /a da+=!ha!/24
+        set /a ha=!ha! %% 24
+        if !ha! leq 9 set ha=0!ha!
+        set ta=!ha!:!ma!:!sa!
+        if "!t:~0,1!"=="-" set "ta=-!ta!"
+    )
     if "!t:~0,1!"=="-" (
-        call :TimeCalc.Add "24:00:00" "!t!" t
+        call :Date.DateSubstractDays day month year !day! !month! !year! !da!
+        call :TimeCalc.Add "24:00:00" "!ta!" t
         call :Date.DateSubstractDays day month year !day! !month! !year! 1
     ) else (
-        set a=0
-        set h=!t:~0,2!
-        if "!h:~0,1!"=="0" set h=!h:~1!
-        if not "!t:~2,1!"==":" set a=1
-        if !h! gtr 23 set a=1
-        if "!a!"=="1" (
-            set k=!t!
-            call :TimeCalc.Sub "!t!" "24:00:00" t
-            call :Date.DateAddDays day month year !day! !month! !year! 1
-        )
+        set "t=!ta!"
+        call :Date.DateAddDays day month year !day! !month! !year! !da!
     )
     (
         endlocal
@@ -2858,7 +2871,7 @@ exit /b
         set /a m3=%m3%-12
         set /a y3+=1
     )
-    call :Date.DiffenceBetweenDate %d1%/%m3%/%y3% %~2 %~3 %~4 day times
+    call :Date.DateDiffenceBetweenDate "%d1%/%m3%/%y3%" "%~2" "%~3" "%~4" day times
     call :TimeCalc.Sub %~4 %~2 times
     if "%times:~0,1%"=="-" (
         set /a g1+=1&call :TimeCalc.Add %times% 23:59:60 times
@@ -2873,9 +2886,9 @@ exit /b
     )
 exit /b
 
-::,-------------------------------------,----------------------------------------------------------------,-------,
-::| :Date.DateDiffenceBetweenDateFormat |                                                                |       |
-::;-------------------------------------'                                                                |  #57  |
+::,---------------------------,--------------------------------------------------------------------------,-------,
+::| :Date.DiffenceBetweenDate |                                                                          |       |
+::;---------------------------'                                                                          |  #58  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Permet de faire la différence en jours entre deux dates                                                      |
@@ -2905,7 +2918,7 @@ exit /b
 ::|    call :Date.DiffenceBetweenDate mydate1 mydate2 mydiff                                                     |
 ::|    echo Total Days: %mydiff.TotalDays% and %mydiff.Time%                                                     |
 ::|    echo %mydiff.Years% Years %mydiff.Months% Months %mydiff.Weeks% Weeks %mydiff.Days% Days^                 |
-::|     %mydiff.Hours% Hours %mydiff.Minutes% Minutes and %mydiff.Seconds%                                       |
+::|     %mydiff.Hours% Hours %mydiff.Minutes% Minutes and %mydiff.Seconds% Seconds                               |
 ::|                                                                                                              |
 ::'--------------------------------------------------------------------------------------------------------------'
 :Date.DiffenceBetweenDate <Date1> <Date2> <Diff>
@@ -2917,7 +2930,7 @@ exit /b
     call :Date.DateDiffenceBetweenDateFormat !d1! !d2! year month week day t
     (
         endlocal
-        set "%~3.TotalDays=%day%"
+        set "%~3.TotalDays=%days%"
         set "%~3.Time=%t%"
         set "%~3.Years=%year%"
         set "%~3.Months=%month%"
@@ -2931,7 +2944,7 @@ exit /b
 
 ::,---------------,--------------------------------------------------------------------------------------,-------,
 ::| :TimeCalc.Add |                                                                                      |       |
-::;---------------'                                                                                      |  #58  |
+::;---------------'                                                                                      |  #59  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Permet d'ajouter deux durées                                                                                 |
@@ -2956,7 +2969,7 @@ Exit /b
 
 ::,---------------,--------------------------------------------------------------------------------------,-------,
 ::| :TimeCalc.Sub |                                                                                      |       |
-::;---------------'                                                                                      |  #59  |
+::;---------------'                                                                                      |  #60  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Permet de soustraire deux durées                                                                             |
@@ -2981,7 +2994,7 @@ Exit /b
 
 ::,--------------------,---------------------------------------------------------------------------------,-------,
 ::| :TimeCalc.ToSecond |                                                                                 |       |
-::;--------------------'                                                                                 |  #60  |
+::;--------------------'                                                                                 |  #61  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Permet de convertir une durée HH:II:SS en secondes                                                           |
@@ -3014,7 +3027,7 @@ Exit /b
 
 ::,--------------------,---------------------------------------------------------------------------------,-------,
 ::| :TimeCalc.ToString |                                                                                 |       |
-::;--------------------'                                                                                 |  #61  |
+::;--------------------'                                                                                 |  #62  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Permet de convertir des secondes en une durée HH:II:SS                                                       |
@@ -3046,7 +3059,7 @@ Exit /b
 
 ::,---------------------,--------------------------------------------------------------------------------,-------,
 ::| :Date.BuildCalendar |                                                                                |       |
-::;---------------------'                                                                                |  #62  |
+::;---------------------'                                                                                |  #63  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Permet de construire le calendrier                                                                           |
@@ -3100,7 +3113,7 @@ exit /b
 
 ::,--------------------------,---------------------------------------------------------------------------,-------,
 ::| :Date.BuildCalendarMerge | @PRIVATE                                                                  |       |
-::;--------------------------'                                                                           |  #63  |
+::;--------------------------'                                                                           |  #64  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Permet de merge 2 mois ligne par ligne                                                                       |
@@ -3149,7 +3162,7 @@ exit /b
 
 ::,--------------------------,---------------------------------------------------------------------------,-------,
 ::| :Date.BuildMonthCalendar |                                                                           |       |
-::;--------------------------'                                                                           |  #64  |
+::;--------------------------'                                                                           |  #65  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Permet de construire le calendrier d'un mois                                                                 |
@@ -3242,7 +3255,7 @@ exit /b
 
 ::,-----------------,------------------------------------------------------------------------------------,-------,
 ::| :Date.AddLocale |                                                                                    |       |
-::;-----------------'                                                                                    |  #65  |
+::;-----------------'                                                                                    |  #66  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Permet d'ajouter des langages                                                                                |
@@ -3298,7 +3311,7 @@ exit /b
             set i=0&set "%%1data="
             for %%i in (!%%1!) do (
                 set "%key%.%%2[!i!]=%%~i"
-                set %%1data=!%%1data! "%key%.%%2[!i!]:%%~i"
+                set %%1data=!%%1data! "[!i!]:%%~i"
                 set /a i+=1
             )
         )
@@ -3332,26 +3345,26 @@ exit /b
         for %%i in (%months%) do set %key%.Data.mm.%%~i=1
         for %%i in (%monthsshort%) do set %key%.Data.m.%%~i=1
         for %%d in (%daysdata%) do (
-            for /f "tokens=1,2 delims=:" %%1 in ('echo;%%~d') do set "%%1=%%2"
+            for /f "tokens=1,2 delims=:" %%1 in ('echo;%%~d') do set "%key%.Day%%1=%%2"
         )
         for %%d in (%monthsdata%) do (
-            for /f "tokens=1,2 delims=:" %%1 in ('echo;%%~d') do set "%%1=%%2"
+            for /f "tokens=1,2 delims=:" %%1 in ('echo;%%~d') do set "%key%.Month%%1=%%2"
         )
         for %%d in (%daysshortdata%) do (
-            for /f "tokens=1,2 delims=:" %%1 in ('echo;%%~d') do set "%%1=%%2"
+            for /f "tokens=1,2 delims=:" %%1 in ('echo;%%~d') do set "%key%.DayShort%%1=%%2"
         )
         for %%d in (%daysmindata%) do (
-            for /f "tokens=1,2 delims=:" %%1 in ('echo;%%~d') do set "%%1=%%2"
+            for /f "tokens=1,2 delims=:" %%1 in ('echo;%%~d') do set "%key%.DayMin%%1=%%2"
         )
         for %%d in (%monthsshortdata%) do (
-            for /f "tokens=1,2 delims=:" %%1 in ('echo;%%~d') do set "%%1=%%2"
+            for /f "tokens=1,2 delims=:" %%1 in ('echo;%%~d') do set "%key%.MonthShort%%1=%%2"
         )
     )
 exit /b
 
 ::,---------------------------,--------------------------------------------------------------------------,-------,
 ::| :Date.ComputeLengthString |                                                                          |       |
-::;---------------------------'                                                                          |  #66  |
+::;---------------------------'                                                                          |  #67  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Permet de construire le calendrier d'un mois                                                                 |
@@ -3389,7 +3402,7 @@ exit /b
 
 ::,-------------------------,----------------------------------------------------------------------------,-------,
 ::| :Date.Error.TimeInvalid | @PRIVATE                                                                   |       |
-::;-------------------------'                                                                            |  #67  |
+::;-------------------------'                                                                            |  #68  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Dès que :Date.Create échoue à parser le temps (HH:II:SS), le call est redirigé ici                           |
@@ -3402,7 +3415,7 @@ exit /b 2
 
 ::,-------------------------,----------------------------------------------------------------------------,-------,
 ::| :Date.Error.DateInvalid | @PRIVATE                                                                   |       |
-::;-------------------------'                                                                            |  #68  |
+::;-------------------------'                                                                            |  #69  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Dès que :Date.Create échoue à parser la date, le call est redirigé ici                                       |
@@ -3415,15 +3428,15 @@ exit /b 2
 
 ::,------------,-----------------------------------------------------------------------------------------,-------,
 ::| :Date.Init | @PRIVATE                                                                                |       |
-::;------------'                                                                                         |  #69  |
+::;------------'                                                                                         |  #70  |
 ::|                                                                                                      |       |
 ::|                                                                                                      '-------;
 ::| Permet d'initialiser la classe Date (cette fonction ne doit pas être appelé)                                 |
 ::|                                                                                                              |
 ::'--------------------------------------------------------------------------------------------------------------'
 :Date.Init
-    call :Date.AddLocale FR "lundi" "mardi" "mercredi" "jeudi" "vendredi" "samedi" "dimanche" "lun." "mar." "mer." "jeu." "ven." "sam." "dim." "lu" "ma" "me" "je" "ve" "sa" "di" "janvier" "fevrier" "mars" "avril" "mai" "juin" "juillet" "aout" "septembre" "octobre" "novembre" "decembre" "janv." "fevr." "mars" "avr." "mai" "juin" "juil." "aout" "sept." "oct." "nov." "dec."
-    call :Date.AddLocale EN "Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday" "Sunday" "Mon" "Tue" "Wed" "Thu" "Fri" "Sat" "Sun" "Mo" "Tu" "We" "Th" "Fr" "Sa" "Su" "January" "February" "March" "April" "May" "June" "July" "August" "September" "October" "November" "December" "Jan" "Feb" "Mar" "Apr" "May" "Jun" "Jul" "Aug" "Sep" "Oct" "Nov" "Dec"
+    call :Date.AddLocale FR "lundi" "mardi" "mercredi" "jeudi" "vendredi" "samedi" "dimanche" "lun." "mar." "mer." "jeu." "ven." "sam." "dim." "lu" "ma" "me" "je" "ve" "sa" "di" "janvier" "fevrier" "mars" "avril" "mai" "juin" "juillet" "aout" "septembre" "octobre" "novembre" "decembre" "janv." "fevr." "mars" "avr." "mai" "juin" "juil." "aout" "sept." "oct." "nov." "dec." Local
+    call :Date.AddLocale EN "Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday" "Sunday" "Mon" "Tue" "Wed" "Thu" "Fri" "Sat" "Sun" "Mo" "Tu" "We" "Th" "Fr" "Sa" "Su" "January" "February" "March" "April" "May" "June" "July" "August" "September" "October" "November" "December" "Jan" "Feb" "Mar" "Apr" "May" "Jun" "Jul" "Aug" "Sep" "Oct" "Nov" "Dec" Local
 exit /b
 
 rem ============= DATE =============
